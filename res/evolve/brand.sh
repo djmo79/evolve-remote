@@ -47,9 +47,13 @@ echo "Baked: rendezvous=$EVOLVE_RD_HOST key=$EVOLVE_RD_KEY"
 #     / Finder label.
 # The .app *file* is renamed once, in the CI packaging step, after the build.
 #
-# The rustdesk:// URL scheme is deliberately NOT touched: the RMM portal mints
-# rustdesk://connection/new/<id> deep links, and the endpoints run the stock
-# client, so the scheme must stay `rustdesk` on both sides.
+# The rustdesk:// URL scheme must stay `rustdesk` on both sides — the RMM portal
+# mints rustdesk://connection/new/<id> deep links and the endpoints run the
+# stock client. But the scheme is NOT independent of the name: get_uri_prefix()
+# derives it as "{app_name_lowercased}://", and core_main.rs checks an incoming
+# URL against that prefix (and Windows registers it in the registry from it), so
+# renaming APP_NAME alone would make the client answer to "evolve it remote://"
+# and ignore the portal's links. The scheme is pinned back to rustdesk below.
 APP_DISPLAY_NAME="Evolve IT Remote"
 
 perl -pi -e 's{RwLock::new\("RustDesk"\.to_owned\(\)\)}{RwLock::new("'"$APP_DISPLAY_NAME"'".to_owned())}' "$CFG"
@@ -72,3 +76,14 @@ if [ -f "$PLIST" ]; then
 fi
 
 echo "Renamed app to: $APP_DISPLAY_NAME"
+
+# Pin the URL scheme to rustdesk:// regardless of the display name, so the
+# portal's deep links and the stock endpoints keep working. Without this the
+# rename above silently repoints the scheme at "evolve it remote://".
+COMMON=src/common.rs
+perl -0pi -e 's{pub fn get_uri_prefix\(\) -> String \{\s*format!\("\{\}://", get_app_name\(\)\.to_lowercase\(\)\)\s*\}}{pub fn get_uri_prefix() -> String \{\n    "rustdesk://".to_owned()\n\}}' "$COMMON"
+grep -F '"rustdesk://".to_owned()' "$COMMON" >/dev/null || {
+  echo "URL scheme pin missed its target in $COMMON" >&2
+  exit 1
+}
+echo "Pinned URL scheme: rustdesk://"
